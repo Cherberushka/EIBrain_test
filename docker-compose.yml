@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  telegram-bot:
+    container_name: EIBrain
+    working_dir: /EIBrain
+    restart: always
+    build:
+        context: .
+        dockerfile: Dockerfile
+    command: sh -c "python app.py"
