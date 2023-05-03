@@ -26,6 +26,8 @@ urllib3==1.26.12
 vosk==0.3.44
 websockets==10.3
 yarl==1.8.1
+loguru==0.6.0
+SpeechRecognition==3.8.1
 
 openai~=0.27.4
 telegram~=0.0.1
