@@ -5,8 +5,9 @@ from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 
-from stt import STT
+from audio_file_operations import audio_convert, audio_recognition, FFmpeg
 from tts import TTS
+from loguru import logger
 
 from main import dp
 from states.talk_state import AI
@@ -14,7 +15,6 @@ import openai
 from main import bot
 
 tts = TTS()
-stt = STT()
 
 
 @dp.callback_query_handler(text='start')
@@ -80,33 +80,25 @@ async def chat_talk(message: types.Message, state: FSMContext):
 
 # Перевод аудио в текст Speech to Text (STT)
 # Хэндлер на получение голосового и аудио сообщения
-@dp.message_handler(content_types=[
-                                    types.ContentType.VOICE,
-                                    types.ContentType.AUDIO,
-                                    types.ContentType.DOCUMENT
-                                   ], state=AI.talk
-                    )
-async def voice_message_handler(message: types.Message, state: FSMContext):
-    """
-    Обработчик на получение голосового и аудио сообщения.
-    """
-    if message.content_type == types.ContentType.VOICE:
-        file_id = message.voice.file_id
-    elif message.content_type == types.ContentType.AUDIO:
-        file_id = message.audio.file_id
-    elif message.content_type == types.ContentType.DOCUMENT:
-        file_id = message.document.file_id
-    else:
-        await message.reply("Формат документа не поддерживается")
-        return
-
+@dp.message_handler(content_types=[types.ContentType.VOICE,
+                                   types.ContentType.AUDIO],
+                    state=AI.talk)
+async def voice_message_handler(message: types.Message, state: FSMContext) -> None:
+    """handle audio from user, transcribe and dend text answer"""
+    # if message.content_type == types.ContentType.VOICE:
+    #     file_id = message.voice.file_id
+    # elif message.content_type == types.ContentType.AUDIO:
+    #     file_id = message.audio.file_id
+    # else:
+    #     await message.reply("Формат документа не поддерживается")
+    #     return
+    file_id = message.voice.file_id
     file = await bot.get_file(file_id)
     file_path = file.file_path
-    file_on_disk = Path("", f"{file_id}.tmp")
-    await bot.download_file(file_path, destination=file_on_disk)
-    await message.reply("Аудио получено")
-
-    text = stt.audio_to_text(file_on_disk)
+    logger.info(file_path)
+    await bot.download_file(file_path, FFmpeg.FILE_IN)
+    await audio_convert()
+    text = await audio_recognition()
     if not text:
         text = "Формат документа не поддерживается"
     #############################################################
@@ -156,8 +148,6 @@ async def voice_message_handler(message: types.Message, state: FSMContext):
 
     # Удаление временного файла
     os.remove(out_filename)
-
-    os.remove(file_on_disk)  # Удаление временного файла
 
 
 @dp.callback_query_handler(text='back', state='*')
