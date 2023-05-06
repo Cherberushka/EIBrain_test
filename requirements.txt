@@ -11,4 +11,17 @@ telegram~=0.0.1
 loguru==0.6.0
 SpeechRecognition==3.8.1
 num2words==0.5.12
+numpy==1.23.3--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==1.13.0+cpu
+aiogram==2.22.2
+aiohttp==3.8.3
+aiosignal==1.2.0
+async-timeout==4.0.2
+attrs==22.1.0
+Babel==2.9.1
+openai~=0.27.4
+telegram~=0.0.1
+loguru==0.6.0
+SpeechRecognition==3.8.1
+num2words==0.5.12
 numpy==1.23.3
