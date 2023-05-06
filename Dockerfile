@@ -1,12 +1,12 @@
 FROM python:3.10
 
-WORKDIR /bot
+WORKDIR /telegram_bot
 
-COPY pip_requirements.txt ./
+COPY requirements.txt ./
 COPY .env ./
 
 RUN apt update && apt install ffmpeg -y
-RUN pip install -r pip_requirements.txt
+RUN pip install -r requirements.txt
 
 COPY ./ ./
 
