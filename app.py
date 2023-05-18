@@ -7,8 +7,6 @@ from utils.set_bot_commands import set_default_commands
 AI.register_handlers_AI(dp)
 start.register_handlers_start(dp)
 help.register_handlers_help(dp)
-# speech_answer.register_handlers_speech_answer(dp)
-# speech_answer_flag = False
 
 
 async def on_startup(dispatcher):

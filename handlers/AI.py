@@ -1,8 +1,5 @@
-import asyncio
 import os
 from pathlib import Path
-from typing import List
-
 import openai
 from aiogram import Dispatcher
 from aiogram import types
@@ -26,7 +23,7 @@ async def back(call: types.CallbackQuery, state: FSMContext):
                               inline_keyboard=[
                                   [InlineKeyboardButton(text="Поделись, пожалуйста, что тебя тревожит?", callback_data="start")]])
     await call.message.answer(
-        f"Привет, {call.from_user.full_name}!",
+        f"Привет, я создан чтобы дать тебе ответы на интересующие тебя вопросы.",
         reply_markup=kb)
     await state.finish()
 
@@ -124,13 +121,19 @@ async def ai_resp(data, text, message):
                 history.append(d)
             else:
                 d = [{"role": "system",
-                      "content": "Вы - психолог, к которому пришел пациент, вы должны дать ему подробный ответ, что можно сделать в случае его проблемы"},
-                     {"role": "user", "content": data[index]['question']},
-                     {"role": "assistant", "content": data[index].get('answer')}]
+                  "content": "Вы - психолог, к которому пришел пациент, вы должны дать ему подробный ответ, что можно сделать в случае его проблемы"},
+                 {"role": "user",
+                  "content": "ответь в режиме психолога, но не советуй обращаться к специалисту и не говори, что не можешь заменить его:" +
+                             data[index]['question']},
+                 {"role": "assistant", "content": data[index].get('answer')}]
                 history += d
     else:
         data[0]['question'] = text
-        d = {"role": "user", "content": data[0].get('question')}
+        d = {"role": "user",
+         "content": "Перейди в режим психолога и сформулируй вопрос для психологической консультации из следующего, но не советуй посетить специалиста, а попробуй разобраться сам: " +
+                    data[0].get(
+                        'question') + " Твой вопрос должен начинаться с 'Правильно ли я понимаю', а дальше твои рассуждения, в каком психологическом аспекте необходимо помочь пользователю"}
+
         history.append(d)
     print(history)
     request = openai.ChatCompletion.create(
@@ -148,7 +151,7 @@ async def ai_resp(data, text, message):
 async def chat_talk(message: types.Message, state: FSMContext):
     data = await state.get_data()
     data = data.get('history')
-    text = await audio_recognition()
+    text = message.text
     resp_ai = await ai_resp(data, text, message)
     data[-1]['answer'] = resp_ai.replace('\n', '')
     text = f"{message.from_user.username}\nQ:{data[-1]['question']}\nA:{data[-1]['answer']}"
@@ -177,29 +180,16 @@ async def voice_message_handler(message: types.Message, state: FSMContext) -> No
     #############################################################
     data = await state.get_data()
     data = data.get('history')
-    # kb = InlineKeyboardMarkup(row_width=1, inline_keyboard=[
-    #     [InlineKeyboardButton(text="Закончить чат", callback_data="back"),
-    #      InlineKeyboardButton(text="Стереть память", callback_data="clear")]])
-    # await message.answer("Генерация ответа...", reply_markup=kb)
     resp_ai = await ai_resp(data, text, message)
     data[-1]['answer'] = resp_ai.replace('\n', '')
     text = f"{message.from_user.username}\nQ:{data[-1]['question']}\nA:{data[-1]['answer']}"
     data.append({"question": None, "answer": None})
-    if len(data) > 10:
+    if len(data) > 20:
         await state.update_data(history=[{"question": None, "answer": None}])
     await state.update_data(history=data)
     await state.update_data(resp_ai=resp_ai)
+    await AI.type_answer.set()
     await ask_type_of_message(message)
-
-    # await message.answer(resp_ai)
-    # # Отправка голосового сообщения
-    # out_filename = tts.text_to_ogg(resp_ai)
-    # path = Path("", out_filename)
-    # voice = InputFile(path)
-    # await bot.send_voice(message.from_user.id, voice)
-    #
-    # # Удаление временного файла
-    # os.remove(out_filename)
 
 
 def register_handlers_AI(dp: Dispatcher):
