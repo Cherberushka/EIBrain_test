@@ -1,114 +1,120 @@
+import asyncio
 import os
 from pathlib import Path
+from typing import List
 
-from aiogram import types, Dispatcher
+import openai
+from aiogram import Dispatcher
+from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
-
-from audio_file_operations import audio_convert, audio_recognition, FFmpeg
-from tts import TTS
 from loguru import logger
 
+from audio_file_operations import audio_convert, audio_recognition, FFmpeg
+from main import bot
 from main import dp
 from states.talk_state import AI
-import openai
-from main import bot
+from tts import TTS
 
 tts = TTS()
 
 
-@dp.callback_query_handler(text='start')
-async def chat_start(call: types.CallbackQuery, state: FSMContext):
-    kb = InlineKeyboardMarkup(row_width=1, inline_keyboard=[
-        [InlineKeyboardButton(text="Закончить чат", callback_data="start"),
-         InlineKeyboardButton(text="Стереть память", callback_data="start")]])
+# Изменить callback
+@dp.callback_query_handler(text='back', state='*')
+async def back(call: types.CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardMarkup(row_width=1,
+                              inline_keyboard=[
+                                  [InlineKeyboardButton(text="Поделись, пожалуйста, что тебя тревожит?", callback_data="start")]])
+    await call.message.answer(
+        f"Привет, {call.from_user.full_name}!",
+        reply_markup=kb)
+    await state.finish()
 
-    await call.message.answer("Отправть сообщение, чтобы начать переписку", reply_markup=kb)
-    await AI.talk.set()
+
+# pr_kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+# stop_bt = types.KeyboardButton(text='Приостановить разговор', callback_data="stop")
+# pr_kb.add(stop_bt)
+#
+#
+
+# @dp.callback_query_handler(text='stop', state='*')
+# async def stop_talk(call: types.CallbackQuery, state: FSMContext):
+#     await state.finish()
+#     kb_stop = types.ReplyKeyboardMarkup()
+#     clear_talk = types.KeyboardButton(text='Стереть разговор', callback_data="clear")
+#     continue_talk = types.KeyboardButton(text='Продолжить разговор', callback_data="continue")
+#     kb_stop.add(clear_talk, continue_talk)
+#     await call.message.answer('Разговор приостановлен', reply_markup=kb_stop)
+#
+#
+# @dp.callback_query_handler(text='continue', state='*')
+# async def clear(call: types.CallbackQuery, state: FSMContext):
+#     await call.message.answer('Продолжение разговора')
+#     await AI.talk.set()
+
+
+@dp.callback_query_handler(text='clear', state='*')
+async def clear(call: types.CallbackQuery, state: FSMContext):
+    await call.message.answer('История общения стёрта')
     await state.update_data(history=[{"question": None, "answer": None}])
 
 
-@dp.message_handler(state=AI.talk)
-async def chat_talk(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    data = data.get('history')
-    kb = InlineKeyboardMarkup(row_width=1, inline_keyboard=[
-        [InlineKeyboardButton(text="Закончить чат", callback_data="back"),
-         InlineKeyboardButton(text="Стереть память", callback_data="clear")]])
-    await message.answer("Генерация ответа...", reply_markup=kb)
+@dp.callback_query_handler(text='start')
+async def chat_start(call: types.CallbackQuery, state: FSMContext):
+    await call.message.answer("Поделись, пожалуйста, что тебя тревожит?")
+    # await Type_answer.speech.set()
+    await AI.talk.set()
+    await state.update_data(history=[{"question": None, "answer": None}], variable=False)
 
-    history = []
-    if len(data) > 1:
-        for index in range(0, len(data)):
-            if data[index].get('question') is None:
-                data[index]['question'] = message.text
-                d = {"role": "user", "content": data[index]['question']}
-                history.append(d)
-            else:
-                d = [{"role": "user", "content": data[index]['question']},
-                     {"role": "assistant", "content": data[index].get('answer')}]
-                history += d
+
+keyboard = types.InlineKeyboardMarkup()
+keyboard.add(types.InlineKeyboardButton(text="Текстовое сообщение", callback_data="text"),
+             types.InlineKeyboardButton(text="Голосовое сообщение", callback_data="voice"),
+             types.InlineKeyboardButton(text="Голосовое и текстовое сообщение", callback_data="both"))
+
+
+async def ask_type_of_message(message: types.Message):
+    await message.answer_chat_action("typing")
+    await message.answer("Выберите тип сообщения:", reply_markup=keyboard)
+
+
+@dp.callback_query_handler(lambda c: c.data and c.data in ["text", "voice", "both"], state=AI.type_answer)
+async def process_callback_data(callback_query: types.CallbackQuery, state: FSMContext):
+    data = callback_query.data
+    await state.update_data(message_type=data)
+    await bot.answer_callback_query(callback_query.id)
+    user_data = await state.get_data()
+    resp_ai = user_data.get("resp_ai")
+    message_type = user_data.get("message_type")
+    if message_type == "voice":
+        await callback_query.message.answer_chat_action("record_voice")
+        out_filename = tts.text_to_ogg(resp_ai)
+        path = Path("", out_filename)
+        voice = InputFile(path)
+        await bot.send_voice(callback_query.from_user.id, voice)
+        os.remove(out_filename)  # delete temporary file
+    elif message_type == "text":
+        await callback_query.message.answer_chat_action("typing")
+        await callback_query.message.answer(resp_ai)
     else:
-        data[0]['question'] = message.text
-        d = {"role": "user", "content": data[0].get('question')}
-        history.append(d)
-    print(history)
-    request = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=history,
-        max_tokens=1500,
-        temperature=1,
-    )
-    resp_ai = request['choices'][0]['message']['content']
-    data[-1]['answer'] = resp_ai.replace('\n', '')
-    text = f"{message.from_user.username}\nQ:{data[-1]['question']}\nA:{data[-1]['answer']}"
-    data.append({"question": None, "answer": None})
-    if len(data) > 10:
-        await state.update_data(history=[{"question": None, "answer": None}])
-    await state.update_data(history=data)
-    await message.answer(resp_ai)
+        await callback_query.message.answer_chat_action("typing")
+        await callback_query.message.answer(resp_ai)
+        await callback_query.message.answer_chat_action("record_voice")
+        out_filename = tts.text_to_ogg(resp_ai)
+        path = Path("", out_filename)
+        voice = InputFile(path)
+        await bot.send_voice(callback_query.from_user.id, voice)
+        os.remove(out_filename)  # delete temporary file
 
-    # Отправка голосового сообщения
-    out_filename = tts.text_to_ogg(resp_ai)
-    path = Path("", out_filename)
-    voice = InputFile(path)
-    await bot.send_voice(message.from_user.id, voice)
-
-    # Удаление временного файла
-    os.remove(out_filename)
+    # Переход в режим ожидания
+    # await callback_query.message.answer()
+    # await AI.wait.set() - ожидание, без действий, можно поменять тип ответа
+    await AI.talk.set()
 
 
-# Перевод аудио в текст Speech to Text (STT)
-# Хэндлер на получение голосового и аудио сообщения
-@dp.message_handler(content_types=[types.ContentType.VOICE,
-                                   types.ContentType.AUDIO],
-                    state=AI.talk)
-async def voice_message_handler(message: types.Message, state: FSMContext) -> None:
-    """handle audio from user, transcribe and dend text answer"""
-    # if message.content_type == types.ContentType.VOICE:
-    #     file_id = message.voice.file_id
-    # elif message.content_type == types.ContentType.AUDIO:
-    #     file_id = message.audio.file_id
-    # else:
-    #     await message.reply("Формат документа не поддерживается")
-    #     return
-    file_id = message.voice.file_id
-    file = await bot.get_file(file_id)
-    file_path = file.file_path
-    logger.info(file_path)
-    await bot.download_file(file_path, FFmpeg.FILE_IN)
-    await audio_convert()
-    text = await audio_recognition()
-    if not text:
-        text = "Формат документа не поддерживается"
-    #############################################################
-    data = await state.get_data()
-    data = data.get('history')
-    kb = InlineKeyboardMarkup(row_width=1, inline_keyboard=[
-        [InlineKeyboardButton(text="Закончить чат", callback_data="back"),
-         InlineKeyboardButton(text="Стереть память", callback_data="clear")]])
-    await message.answer("Генерация ответа...", reply_markup=kb)
-
+# Обработка ответа GPT AI
+async def ai_resp(data, text, message):
+    await message.answer_chat_action("typing")
     history = []
     if len(data) > 1:
         for index in range(0, len(data)):
@@ -117,7 +123,9 @@ async def voice_message_handler(message: types.Message, state: FSMContext) -> No
                 d = {"role": "user", "content": data[index]['question']}
                 history.append(d)
             else:
-                d = [{"role": "user", "content": data[index]['question']},
+                d = [{"role": "system",
+                      "content": "Вы - психолог, к которому пришел пациент, вы должны дать ему подробный ответ, что можно сделать в случае его проблемы"},
+                     {"role": "user", "content": data[index]['question']},
                      {"role": "assistant", "content": data[index].get('answer')}]
                 history += d
     else:
@@ -132,41 +140,70 @@ async def voice_message_handler(message: types.Message, state: FSMContext) -> No
         temperature=1,
     )
     resp_ai = request['choices'][0]['message']['content']
+    return resp_ai
+
+
+# Обработка текстового сообщения
+@dp.message_handler(state=AI.talk)
+async def chat_talk(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    data = data.get('history')
+    text = await audio_recognition()
+    resp_ai = await ai_resp(data, text, message)
+    data[-1]['answer'] = resp_ai.replace('\n', '')
+    text = f"{message.from_user.username}\nQ:{data[-1]['question']}\nA:{data[-1]['answer']}"
+    data.append({"question": None, "answer": None})
+    if len(data) > 25:
+        await state.update_data(history=[{"question": None, "answer": None}])
+    await state.update_data(history=data)
+    await state.update_data(resp_ai=resp_ai)
+    await AI.type_answer.set()
+    await ask_type_of_message(message)
+
+
+# Перевод аудио в текст Speech to Text (STT) - Хэндлер на получение голосового и аудио сообщения
+@dp.message_handler(content_types=[types.ContentType.VOICE, types.ContentType.AUDIO], state=AI.talk)
+async def voice_message_handler(message: types.Message, state: FSMContext) -> None:
+    await message.answer_chat_action("typing")
+    file_id = message.voice.file_id
+    file = await bot.get_file(file_id)
+    file_path = file.file_path
+    logger.info(file_path)
+    await bot.download_file(file_path, FFmpeg.FILE_IN)
+    await audio_convert()
+    text = await audio_recognition()
+    if not text:
+        text = "Формат документа не поддерживается"
+    #############################################################
+    data = await state.get_data()
+    data = data.get('history')
+    # kb = InlineKeyboardMarkup(row_width=1, inline_keyboard=[
+    #     [InlineKeyboardButton(text="Закончить чат", callback_data="back"),
+    #      InlineKeyboardButton(text="Стереть память", callback_data="clear")]])
+    # await message.answer("Генерация ответа...", reply_markup=kb)
+    resp_ai = await ai_resp(data, text, message)
     data[-1]['answer'] = resp_ai.replace('\n', '')
     text = f"{message.from_user.username}\nQ:{data[-1]['question']}\nA:{data[-1]['answer']}"
     data.append({"question": None, "answer": None})
     if len(data) > 10:
         await state.update_data(history=[{"question": None, "answer": None}])
     await state.update_data(history=data)
-    await message.answer(resp_ai)
+    await state.update_data(resp_ai=resp_ai)
+    await ask_type_of_message(message)
 
-    # Отправка голосового сообщения
-    out_filename = tts.text_to_ogg(resp_ai)
-    path = Path("", out_filename)
-    voice = InputFile(path)
-    await bot.send_voice(message.from_user.id, voice)
-
-    # Удаление временного файла
-    os.remove(out_filename)
-
-
-@dp.callback_query_handler(text='back', state='*')
-async def back(call: types.CallbackQuery, state: FSMContext):
-    kb = InlineKeyboardMarkup(row_width=1,
-                              inline_keyboard=[[InlineKeyboardButton(text="Начать чат с ИИ", callback_data="start")]])
-    await call.message.answer(
-        f"Привет, {call.from_user.full_name}!",
-        reply_markup=kb)
-    await state.finish()
-
-
-@dp.callback_query_handler(text='clear', state='*')
-async def clear(call: types.CallbackQuery, state: FSMContext):
-    await call.message.answer('История общения стёрта')
-    await state.update_data(history=[{"question": None, "answer": None}])
+    # await message.answer(resp_ai)
+    # # Отправка голосового сообщения
+    # out_filename = tts.text_to_ogg(resp_ai)
+    # path = Path("", out_filename)
+    # voice = InputFile(path)
+    # await bot.send_voice(message.from_user.id, voice)
+    #
+    # # Удаление временного файла
+    # os.remove(out_filename)
 
 
 def register_handlers_AI(dp: Dispatcher):
+    # dp.register_message_handler(stop_talk, text=['stop'])
     dp.register_message_handler(chat_start, text=['start'])
     dp.register_message_handler(chat_talk, state=AI.talk)
     dp.register_message_handler(back, text=['back'])
